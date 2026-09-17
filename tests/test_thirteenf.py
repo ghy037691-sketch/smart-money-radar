@@ -230,7 +230,7 @@ class MovesTests(unittest.TestCase):
         # A fund whose latest 13F is from an older quarter must not pollute
         # the current-quarter convergence (e.g. a fund last filing in 2015).
         reports = self._reports()
-        stale = tf.mk_quarter(b"""<informationTable><submitter><valueTotal>99999</valueTotal></submitter>
+        stale = mk_quarter(b"""<informationTable><submitter><valueTotal>99999</valueTotal></submitter>
           <infoTable><nameOfIssuer>ZETA CORP</nameOfIssuer><titleOfClass>COM</titleOfClass>
           <cusip>099999999</cusip><value>99999</value><sshPrnamt>100</sshPrnamt>
           <issuanceType>Initial</issuanceType></infoTable></informationTable>""",
