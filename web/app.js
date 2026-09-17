@@ -82,6 +82,7 @@ async function loadFunds() {
         <h4>${esc(f.name)}</h4>
         <div class="mgr">${esc(f.manager || "—")}</div>
         <div class="fund-stat"><span>Portfolio (QoE)</span><b>${fmtUSD(f.total_value_usd)}</b></div>
+        <div class="fund-stat"><span>Quarter</span><b>${f.period || "—"}</b></div>
         <div class="fund-stat"><span>Positions</span><b>${f.positions_count != null ? f.positions_count.toLocaleString() : "—"}</b></div>
         <div class="fund-stat"><span>New / Exited</span><b>${f.new_count} / ${f.exited_count}</b></div>
         ${f.error ? `<div class="fund-stat"><span>Status</span><b class="down">unavailable</b></div>` : ""}

@@ -235,6 +235,25 @@ class FundLookupTests(unittest.TestCase):
         self.assertEqual(f["slug"], "berkshire")
         self.assertIsNone(thirteenf.fund_by_slug_or_cik("nope-nope"))
 
+    def test_stale_fund_excluded_from_moves(self):
+        # A fund whose latest 13F is from an older quarter must not pollute
+        # the current-quarter convergence (e.g. appaloosa filing 2015).
+        reports = self._reports()
+        # stale fund's qoq: its "latest" period is older than the basket's
+        stale = tf.mk_quarter(b"""<informationTable><submitter><valueTotal>99999</valueTotal></submitter>
+          <infoTable><nameOfIssuer>ZETA CORP</nameOfIssuer><titleOfClass>COM</titleOfClass>
+          <cusip>099999999</cusip><value>99999</value><sshPrnamt>100</sshPrnamt>
+          <issuanceType>Initial</issuanceType></infoTable></informationTable>""",
+          "2024-12-31", name="STALE FUND LP", cik=99)
+        reports.append({"fund": {"slug": "stale", "name": "STALE FUND LP",
+                                 "manager": None, "cik": 99},
+                        "qoq": thirteenf.fund_qoq(stale, None)})
+        moves = thirteenf.top_moves(reports, min_funds=2, include_etfs=False, limit=20)
+        issuers = {r["issuer"] for r in moves["buys"]} | {r["issuer"] for r in moves["sells"]}
+        self.assertNotIn("ZETA CORP", issuers)  # 2024 quarter, excluded
+        self.assertEqual(moves["period"], "2026-06-30")
+        self.assertIn("GAMMA LLC", issuers)
+
     def test_basket_loads_17(self):
         funds = thirteenf.load_funds()
         self.assertGreaterEqual(len(funds), 15)

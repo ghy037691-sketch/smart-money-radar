@@ -238,10 +238,16 @@ def top_moves(fund_reports, min_funds=2, include_etfs=False, limit=50):
     """Cross-fund convergence for the latest quarter.
     fund_reports: [{fund: {slug, name, manager}, qoq: fund_qoq result}]
     Returns buys, sells (ranked: convergence first, then net delta magnitude).
+
+    Only funds whose latest 13F matches the basket's newest quarter are
+    aggregated — mixing a 2015 delta into a 2026 "move" would be wrong.
     """
     agg = {}
+    periods = [fr["qoq"]["period"] for fr in fund_reports
+               if fr.get("qoq") and fr["qoq"].get("period")]
+    latest_period = max(periods) if periods else None
     for fr in fund_reports:
-        if not fr.get("qoq") or not fr["qoq"].get("period"):
+        if not fr.get("qoq") or fr["qoq"].get("period") != latest_period:
             continue
         q = fr["qoq"]
         fund_label = fr["fund"]["name"]
@@ -460,7 +466,7 @@ def build_fund_reports(funds=None, progress=None):
     return reports
 
 
-def insider_buys(days_back=30, min_value_usd=100_000, limit=100, parse_cap=80):
+def insider_buys(days_back=30, min_value_usd=100_000, limit=100, parse_cap=200):
     """Recent open-market Form 4 purchases above a value threshold, with
     cluster detection (>=2 distinct insiders buying the same company in the
     window)."""
@@ -474,35 +480,47 @@ def insider_buys(days_back=30, min_value_usd=100_000, limit=100, parse_cap=80):
         if parsed >= parse_cap or len(rows) >= limit:
             break
         parsed += 1
+        # The index page links the documents; the Form 4 data XML (root
+        # <ownershipDocument>) is a separate file — usually wk-form4*.xml.
         t = edgar.get(h["filing_index"], raw=True) if h["filing_index"] else b""
-        if b"ownershipDocument" not in t:
-            continue
-        # find the wk-form4 primary xml in the index
         hrefs = re.findall(rb'href="([^"]+\.xml)"', t)
-        doc = None
-        for href in hrefs:
-            s = href.decode("latin-1", "ignore")
-            if "/xsl" in s or s.lower().endswith(".xsd"):
+        cands = [s for s in (x.decode("latin-1", "ignore") for x in hrefs)
+                 if "/xsl" not in s and not s.lower().endswith(".xsd")]
+        cands.sort(key=lambda s: 0 if re.search(r"(form4|primary|wk-)", s, re.I) else 1)
+        raw4 = None
+        for s in cands[:3]:
+            doc = ("https://www.sec.gov" + s) if s.startswith("/") else (
+                h["filing_index"].rsplit("/", 1)[0] + "/" + s)
+            try:
+                r = edgar.get(doc, raw=True)
+            except Exception:
                 continue
-            if re.search(r"/\d{10}/(?!xsl)", s, re.I):
-                doc = s
+            if b"ownershipDocument" in r:
+                raw4 = r
                 break
-        if not doc:
+        if raw4 is None:
             continue
-        if doc.startswith("/"):
-            doc = "https://www.sec.gov" + doc
-        elif not doc.startswith("http"):
-            doc = h["filing_index"].rsplit("/", 1)[0] + "/" + doc
         try:
-            raw4 = edgar.get(doc, raw=True)
             root = ET.fromstring(raw4)
         except Exception:
             continue
         insider = None
         roles = []
-        txns = []
+        issuer_name = issuer_cik = issuer_sym = None
+        in_issuer = False
         for node in root.iter():
             tag = node.tag.split("}")[-1]
+            if tag == "issuer":
+                in_issuer = True
+            elif tag == "reportingOwner":
+                in_issuer = False
+            elif in_issuer:
+                if tag in ("issuerCik", "cik") and not issuer_cik:
+                    issuer_cik = (node.text or "").strip()
+                elif tag in ("issuerName", "name") and not issuer_name:
+                    issuer_name = (node.text or "").strip()
+                elif tag in ("issuerTradingSymbol", "symbol") and not issuer_sym:
+                    issuer_sym = (node.text or "").strip()
             if tag == "rptOwnerName" and insider is None:
                 insider = (node.text or "").strip()
             elif tag in ("isDirector", "isOfficer", "isTenPercentOwner"):
@@ -511,9 +529,15 @@ def insider_buys(days_back=30, min_value_usd=100_000, limit=100, parse_cap=80):
                                   "isTenPercentOwner": "10% owner"}[tag])
             elif tag == "nonDerivativeTransaction":
                 def g(t):
+                    # numeric fields may be wrapped in a <value> child element
                     for el in node.iter():
                         if el.tag.split("}")[-1] == t:
-                            return (el.text or "").strip()
+                            txt = (el.text or "").strip()
+                            if txt:
+                                return txt
+                            v = el.find(".//value")
+                            if v is not None and (v.text or "").strip():
+                                return v.text.strip()
                     return ""
                 code = g("transactionCode")
                 if code != "P":  # only open-market purchases are buy signals
@@ -527,7 +551,8 @@ def insider_buys(days_back=30, min_value_usd=100_000, limit=100, parse_cap=80):
                 if value < min_value_usd:
                     continue
                 rows.append({
-                    "company": h["company"], "ticker": h.get("ticker"), "cik": h.get("cik"),
+                    "company": issuer_name or h["company"], "ticker": issuer_sym or h.get("ticker"),
+                    "cik": issuer_cik or h.get("cik"),
                     "insider": insider, "roles": roles,
                     "date": g("transactionDate"),
                     "shares": int(shares) if shares == int(shares) else shares,
@@ -536,13 +561,13 @@ def insider_buys(days_back=30, min_value_usd=100_000, limit=100, parse_cap=80):
                     "filed": h.get("filed"),
                     "source_url": h.get("filing_index"),
                 })
-    # cluster detection
-    by_company = {}
+    # cluster detection (by issuer CIK)
+    by_issuer = {}
     for r in rows:
-        by_company.setdefault(r["company"], set()).add(r["insider"] or "?")
-    clusters = {c for c, s in by_company.items() if len(s) >= 2}
+        by_issuer.setdefault(r["cik"] or r["company"], set()).add(r["insider"] or "?")
+    clusters = {c for c, s in by_issuer.items() if len(s) >= 2}
     for r in rows:
-        r["cluster"] = r["company"] in clusters
+        r["cluster"] = (r["cik"] or r["company"]) in clusters
         r["signal"] = "CLUSTER INSIDER BUY" if r["cluster"] else "insider buy"
     rows.sort(key=lambda r: (not r["cluster"], -r["value_usd"]))
     return {
