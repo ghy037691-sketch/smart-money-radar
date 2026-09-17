@@ -1,0 +1,49 @@
+{
+  "title": "Smart Money Radar output",
+  "type": "object",
+  "schemaVersion": 1,
+  "properties": {
+    "record_type": {
+      "type": "string",
+      "description": "top_moves | fund_flows | stock_holdings | insider_buys | error"
+    },
+    "quarter": {
+      "type": ["string", "null"],
+      "description": "Quarter-end date of the 13F data (YYYY-MM-DD)"
+    },
+    "top_buys": {
+      "type": "array",
+      "description": "Cross-fund net buys, convergence first, then by net delta"
+    },
+    "top_sells": {
+      "type": "array",
+      "description": "Cross-fund net sells, convergence first, then by magnitude"
+    },
+    "fund": {
+      "type": "string",
+      "description": "Fund name (fund_flows)"
+    },
+    "new_positions": { "type": "array" },
+    "increased": { "type": "array" },
+      "decreased": { "type": "array" },
+      "exited_positions": { "type": "array" },
+      "top_positions": { "type": "array" },
+    "holdings": {
+      "type": "array",
+      "description": "Per-fund holdings of the requested security (stock_holdings)"
+    },
+    "insider_buys": {
+      "type": "array",
+      "description": "Open-market Form 4 purchases with cluster flags (insider_buys)"
+    },
+    "error": {
+      "type": "string",
+      "description": "Present only on failure; failures are zero-billable."
+    },
+    "_meta": {
+      "type": "object",
+      "description": "Actor, action, source, retrieved_at"
+    }
+  },
+  "required": ["record_type"]
+}

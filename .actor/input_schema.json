@@ -1,0 +1,99 @@
+{
+  "title": "Smart Money Radar",
+  "description": "Choose one workflow. Smart Money Moves (default) returns cross-fund convergence for the latest 13F quarter.",
+  "type": "object",
+  "schemaVersion": 1,
+  "properties": {
+    "action": {
+      "title": "What do you want to see?",
+      "type": "string",
+      "editor": "select",
+      "enum": ["top_moves", "fund_flows", "stock_holdings", "insider_buys"],
+      "enumTitles": [
+        "Smart money moves (cross-fund, default)",
+        "One fund's 13F: positions + QoQ changes",
+        "Which tracked funds hold a security?",
+        "Recent large insider buys (Form 4)"
+      ],
+      "default": "top_moves",
+      "prefill": "top_moves",
+      "example": "top_moves",
+      "description": "top_moves = what the tracked funds are all buying/selling this quarter. fund_flows = single-fund QoQ report. stock_holdings = holdings of one security across the basket. insider_buys = open-market Form 4 purchases with cluster detection."
+    },
+    "min_funds": {
+      "title": "Convergence threshold (funds)",
+      "type": "integer",
+      "editor": "number",
+      "minimum": 2,
+      "maximum": 25,
+      "default": 2,
+      "prefill": 2,
+      "example": 3,
+      "sectionCaption": "Smart money moves",
+      "description": "Mark a move as 'convergence' when at least this many tracked funds moved the same way."
+    },
+    "include_etfs": {
+      "title": "Include ETF positions",
+      "type": "boolean",
+      "editor": "boolean",
+      "default": false,
+      "description": "ETF holdings are usually passive allocation, not stock-picking signals. Off by default."
+    },
+    "limit": {
+      "title": "Maximum results",
+      "type": "integer",
+      "editor": "number",
+      "minimum": 1,
+      "maximum": 200,
+      "default": 50,
+      "prefill": 10,
+      "example": 25,
+      "description": "How many moves/buys/holdings to return."
+    },
+    "fund": {
+      "title": "Fund (for fund_flows)",
+      "type": "string",
+      "editor": "string",
+      "default": "berkshire",
+      "prefill": "berkshire",
+      "example": "citadel",
+      "sectionCaption": "Fund flows",
+      "description": "Basket slug (berkshire, bridgewater, renaissance, citadel, tiger, appaloosa, pershing, greenlight, d1, baillie, duquesne, thirdpoint, point72, soros, valueact, starboard, coatue), official fund name, CIK, or any other fund name (resolved via EDGAR)."
+    },
+    "symbol": {
+      "title": "Security (for stock_holdings)",
+      "type": "string",
+      "editor": "string",
+      "default": "NVDA",
+      "prefill": "NVDA",
+      "example": "TSLA",
+      "sectionCaption": "Stock holdings",
+      "description": "Ticker, CUSIP, or issuer name. Example: NVDA, 037833100, or 'Apple Inc'."
+    },
+    "days_back": {
+      "title": "Insider lookback window (days)",
+      "type": "integer",
+      "editor": "number",
+      "minimum": 1,
+      "maximum": 365,
+      "default": 30,
+      "prefill": 30,
+      "example": 30,
+      "sectionCaption": "Insider buys",
+      "description": "How many calendar days back to scan Form 4 filings."
+    },
+    "min_value_usd": {
+      "title": "Minimum purchase value (USD)",
+      "type": "integer",
+      "editor": "number",
+      "minimum": 0,
+      "maximum": 1000000000,
+      "default": 100000,
+      "prefill": 100000,
+      "example": 250000,
+      "sectionCaption": "Insider buys",
+      "description": "Only open-market purchases at least this large are returned."
+    }
+  },
+  "required": []
+}

@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Smart Money Radar — What Hedge Funds Are Buying This Quarter (SEC 13F)</title>
+<meta name="description" content="Live cross-fund signals from official SEC Form 13F filings: what Berkshire, Citadel, Tiger, Bridgewater, Pershing and 12 more funds are all buying and selling this quarter — plus large insider cluster buys from Form 4. Free, no signup.">
+<meta property="og:title" content="Smart Money Radar — What Hedge Funds Are Buying This Quarter">
+<meta property="og:description" content="Cross-fund 13F convergence + insider cluster buys, straight from SEC EDGAR. Free, cited, no signup.">
+<meta property="og:type" content="website">
+<link rel="icon" type="image/svg+xml" href="/static/logo.svg">
+<link rel="stylesheet" href="/static/styles.css">
+<link rel="manifest" href="/static/manifest.json">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"WebApplication","name":"Smart Money Radar","applicationCategory":"FinanceApplication","operatingSystem":"Any","description":"Cross-fund institutional flow signals from SEC 13F filings and insider buy signals from Form 4.","url":"https://smart-money-radar.onrender.com"}
+</script>
+</head>
+<body>
+<header class="top">
+  <div class="wrap nav">
+    <a class="brand" href="#top">
+      <img src="/static/logo.svg" alt="" width="26" height="26">
+      <span>Smart<b>Money</b>Radar</span>
+    </a>
+    <nav class="links" id="tabs">
+      <a href="#moves" class="tab active" data-tab="moves">Smart Money Moves</a>
+      <a href="#funds" class="tab" data-tab="funds">Funds</a>
+      <a href="#insiders" class="tab" data-tab="insiders">Insider Buys</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+  <section class="hero">
+    <div class="wrap">
+      <p class="eyebrow" id="quarter-badge">Official SEC Form 13F · loading quarter…</p>
+      <h1>What the smartest funds are<br><span class="accent">buying this quarter</span></h1>
+      <p class="sub">
+        Every quarter, ~5,000 institutions managing $100M+ must file their complete US equity
+        positions (Form 13F). We parse the latest filings for <strong id="fund-count">17</strong>
+        marquee funds — Buffett, Dalio, Griffin, Simons, Ackman, Tepper, Druckenmiller and more —
+        and surface where they <strong>converge</strong>: the same stock, bought by several of them at once.
+      </p>
+      <form class="stock-search" id="stock-form">
+        <input id="stock-q" type="search" placeholder="Who's holding it? — try TSLA, NVDA, AAPL, or a CUSIP" autocomplete="off">
+        <button class="btn" type="submit">Check</button>
+      </form>
+      <div id="stock-result" class="stock-result" hidden></div>
+    </div>
+  </section>
+
+  <!-- MOVES -->
+  <section id="moves" class="section">
+    <div class="wrap">
+      <div class="section-head">
+        <h2>Smart money moves <span class="muted" id="moves-quarter"></span></h2>
+        <label class="etf-toggle"><input type="checkbox" id="etf-toggle"> include ETFs</label>
+      </div>
+      <p class="lead">Quarter-over-quarter net change in position value across the basket. <b>Convergence</b> = at least 2 tracked funds moved the same way.</p>
+      <div class="two-col">
+        <div>
+          <h3 class="side-head buy">▲ Top buys this quarter</h3>
+          <div class="card table-wrap"><table id="buys-table">
+            <thead><tr><th>Security</th><th>Buyers</th><th>Net change</th><th>Funds</th></tr></thead>
+            <tbody><tr><td colspan="4" class="muted">Loading…</td></tr></tbody>
+          </table></div>
+        </div>
+        <div>
+          <h3 class="side-head sell">▼ Top sells / exits this quarter</h3>
+          <div class="card table-wrap"><table id="sells-table">
+            <thead><tr><th>Security</th><th>Sellers</th><th>Net change</th><th>Funds</th></tr></thead>
+            <tbody><tr><td colspan="4" class="muted">Loading…</td></tr></tbody>
+          </table></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FUNDS -->
+  <section id="funds" class="section alt">
+    <div class="wrap">
+      <h2>The tracked basket <span class="muted">— 17 funds, 45-day-delayed data</span></h2>
+      <p class="lead">Latest 13F per fund: portfolio size, new positions and exits vs the prior quarter. Click a fund for the full QoQ report.</p>
+      <div class="fund-grid" id="fund-grid"></div>
+      <div id="fund-detail" class="card" hidden></div>
+    </div>
+  </section>
+
+  <!-- INSIDERS -->
+  <section id="insiders" class="section">
+    <div class="wrap">
+      <h2>Insider buys <span class="muted">— open-market Form 4 purchases, last 30 days</span></h2>
+      <p class="lead">Large open-market purchases by officers, directors and 10% owners. <b class="gold">Cluster buy</b> = two or more distinct insiders buying the same company in the window — historically one of the most-watched retail signals.</p>
+      <div class="card table-wrap"><table class="deals-table" id="insider-table">
+        <thead><tr><th>Company</th><th>Insider</th><th>Date</th><th>Shares</th><th>Value</th><th>Signal</th></tr></thead>
+        <tbody><tr><td colspan="6" class="muted">Loading (first fetch ~30s)…</td></tr></tbody>
+      </table></div>
+      <p class="muted small">Insider data updates daily. 13F data is 45 days delayed and covers long US equity positions only — shorts and non-US assets are never disclosed.</p>
+    </div>
+  </section>
+</main>
+
+<footer class="foot">
+  <div class="wrap foot-grid">
+    <div>
+      <img src="/static/logo.svg" alt="" width="22" height="22"> <strong>SmartMoney Radar</strong>
+      <p class="muted small">Official SEC EDGAR data only. Every row links to its source filing.</p>
+    </div>
+    <div>
+      <p class="muted small">Not investment advice. Following institutional flows has no guaranteed edge — position values are quarter-end marks, not trade prices.</p>
+      <p class="muted small">Data: SEC Form 13F-HR & Form 4 filings (public) · <a href="/api/health" class="muted">API</a></p>
+    </div>
+  </div>
+</footer>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

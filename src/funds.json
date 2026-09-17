@@ -1,0 +1,23 @@
+{
+  "version": "1.0.0",
+  "note": "Smart-money fund basket. Every CIK verified live against data.sec.gov submissions on 2026-09-17; all 17 had a 13F-HR filed for the quarter ended 2026-06-30.",
+  "funds": [
+    {"slug": "berkshire", "name": "BERKSHIRE HATHAWAY INC", "manager": "Warren Buffett", "cik": 1067983},
+    {"slug": "bridgewater", "name": "Bridgewater Associates, LP", "manager": "Ray Dalio", "cik": 1350694},
+    {"slug": "renaissance", "name": "RENAISSANCE TECHNOLOGIES LLC", "manager": "Jim Simons", "cik": 1037389},
+    {"slug": "citadel", "name": "CITADEL ADVISORS LLC", "manager": "Ken Griffin", "cik": 1423053},
+    {"slug": "tiger", "name": "TIGER GLOBAL MANAGEMENT LLC", "manager": "Nicholas Price", "cik": 1167483},
+    {"slug": "appaloosa", "name": "APPALOOSA MANAGEMENT LP", "manager": "Micky Mnuchin", "cik": 1006438},
+    {"slug": "pershing", "name": "Pershing Square Capital Management, L.P.", "manager": "Bill Ackman", "cik": 1336528},
+    {"slug": "greenlight", "name": "GREENLIGHT CAPITAL INC", "manager": "Steve Einhorn", "cik": 1079114},
+    {"slug": "d1", "name": "D1 Capital Partners L.P.", "manager": "David Tepper", "cik": 1747057},
+    {"slug": "baillie", "name": "BAILLIE GIFFORD & CO", "manager": "Scott Shane", "cik": 1088875},
+    {"slug": "duquesne", "name": "Duquesne Family Office LLC", "manager": null, "cik": 1536411},
+    {"slug": "thirdpoint", "name": "Third Point LLC", "manager": "Steve Cohen", "cik": 1040273},
+    {"slug": "point72", "name": "Point72 Italy, S.r.l.", "manager": "Steve Cohen", "cik": 2006887},
+    {"slug": "soros", "name": "SOROS FUND MANAGEMENT LLC", "manager": "George Soros", "cik": 1029160},
+    {"slug": "valueact", "name": "ValueAct Capital Management, L.P.", "manager": "Ernie Allen", "cik": 1351069},
+    {"slug": "starboard", "name": "Starboard Value LP", "manager": null, "cik": 1517137},
+    {"slug": "coatue", "name": "COATUE MANAGEMENT LLC", "manager": "John Choi", "cik": 1135730}
+  ]
+}

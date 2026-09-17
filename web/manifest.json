@@ -1,0 +1,10 @@
+{
+  "name": "Smart Money Radar",
+  "short_name": "SMRadar",
+  "description": "Cross-fund institutional flow signals from SEC 13F filings",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0c0f1a",
+  "theme_color": "#0c0f1a",
+  "icons": [{ "src": "/static/logo.svg", "sizes": "any", "type": "image/svg+xml" }]
+}

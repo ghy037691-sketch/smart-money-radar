@@ -1,0 +1,21 @@
+{
+  "title": "Smart Money Radar dataset",
+  "type": "object",
+  "schemaVersion": 1,
+  "properties": {
+    "action": { "type": "string" },
+    "record_type": { "type": "string" },
+    "issuer": { "type": "string" },
+    "ticker": { "type": ["string", "null"] },
+    "cusip": { "type": ["string", "null"] },
+    "value_usd": { "type": "integer" },
+    "delta_usd": { "type": ["integer", "null"] },
+    "convergence": { "type": "boolean" },
+    "signal": { "type": "string" },
+    "company": { "type": "string" },
+    "insider": { "type": "string" },
+    "cluster": { "type": "boolean" },
+    "source": { "type": "string" },
+    "retrieved_at": { "type": "string" }
+  }
+}

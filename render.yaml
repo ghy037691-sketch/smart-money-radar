@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: smart-money-radar
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./Dockerfile.web
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: SEC_EDGAR_USER_AGENT
+        value: "smart-money-radar/1.0 (contact: contact@edgar-signals.onrender.com)"

@@ -1,0 +1,19 @@
+{
+  "actorSpecification": 1,
+  "name": "smart-money-radar",
+  "title": "Smart Money Radar — 13F Fund Flows & Insider Buys",
+  "description": "Cross-fund institutional flow signals from official SEC filings. See which stocks Berkshire, Citadel, Tiger, Bridgewater, Pershing, D1 and 12 more funds are all buying or selling this quarter (Form 13F convergence), drill into any single fund's QoQ changes, check which tracked funds hold any security, and scan recent large open-market insider purchases with cluster-buy detection (Form 4). No API key required.",
+  "version": "1.0",
+  "buildTag": "latest",
+  "readme": "../README.md",
+  "changelog": "../CHANGELOG.md",
+  "input": "./input_schema.json",
+  "output": "./output_schema.json",
+  "storages": {
+    "dataset": "./dataset_schema.json"
+  },
+  "defaultMemoryMbytes": 512,
+  "minMemoryMbytes": 256,
+  "maxMemoryMbytes": 1024,
+  "dockerfile": "../Dockerfile"
+}
