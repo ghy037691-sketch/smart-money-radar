@@ -44,80 +44,119 @@ def _tag_text(el, tag):
 
 def parse_13f_xml(raw: bytes):
     """Parse a 13F information table. Returns (positions, total_value_usd).
-    positions: {cusip: {issuer, class, cusip, value_usd, shares, put_call, issuance}}
+
+    Two formats exist in the wild:
+      - legacy (no XML namespace, has <submitter>/<valueTotal>): values in
+        THOUSANDS of USD; rows carry putCall + issuanceType.
+      - modern (xmlns=.../thirteenf/informationtable): values in WHOLE USD;
+        same CUSIP may appear on multiple rows (one per sub-manager) and has
+        no putCall/issuanceType. Sub-rows are aggregated per (cusip, putCall).
     """
+    legacy = b"valueTotal" in raw
+    scale = 1000 if legacy else 1
     root = ET.fromstring(raw)
     positions = {}
-    total = None
     for node in root.iter():
-        t = node.tag.split("}")[-1]
-        if t == "valueTotal" and total is None:
-            try:
-                total = int(float((node.text or "0").strip())) * 1000
-            except ValueError:
-                total = None
-        elif t == "infoTable":
-            issuer = _tag_text(node, "nameOfIssuer")
-            class_ = _tag_text(node, "titleOfClass")
-            cusip = _tag_text(node, "cusip")
-            try:
-                value = int(float(_tag_text(node, "value") or 0)) * 1000
-            except ValueError:
-                value = 0
-            try:
-                shares = float(_tag_text(node, "sshPrnamt") or 0)
-            except ValueError:
-                shares = None
-            positions[cusip or (issuer + "|" + class_)] = {
-                "issuer": issuer,
-                "class": class_,
-                "cusip": cusip,
-                "value_usd": value,
-                "shares": int(shares) if shares is not None else None,
-                "put_call": _tag_text(node, "putCall") or None,
-                "issuance": _tag_text(node, "issuanceType") or None,
-            }
-    return positions, total
+        if node.tag.split("}")[-1] != "infoTable":
+            continue
+        issuer = _tag_text(node, "nameOfIssuer")
+        class_ = _tag_text(node, "titleOfClass")
+        cusip = _tag_text(node, "cusip")
+        put_call = _tag_text(node, "putCall") or ""
+        try:
+            value = int(float(_tag_text(node, "value") or 0)) * scale
+        except ValueError:
+            value = 0
+        try:
+            shares = float(_tag_text(node, "sshPrnamt") or 0)
+        except ValueError:
+            shares = 0
+        key = (cusip or (issuer + "|" + class_), put_call)
+        pos = positions.setdefault(key, {
+            "issuer": issuer,
+            "class": class_,
+            "cusip": cusip,
+            "value_usd": 0,
+            "shares": 0.0,
+            "put_call": put_call or None,
+            "issuance": None,
+        })
+        pos["value_usd"] += value
+        pos["shares"] += shares
+        iss = _tag_text(node, "issuanceType")
+        if iss and not pos["issuance"]:
+            pos["issuance"] = iss
+    out = {}
+    for (cusip_key, put_call), p in positions.items():
+        out[cusip_key if not put_call else f"{cusip_key}|{put_call}"] = p
+    for p in out.values():
+        p["shares"] = int(p["shares"]) if p["shares"] == int(p["shares"]) else p["shares"]
+    total = sum(p["value_usd"] for p in out.values())
+    return out, total
+
+
+def _parses_as_info_table(raw: bytes) -> bool:
+    """Strict check: well-formed XML containing infoTable/informationTable
+    elements (namespace-agnostic)."""
+    try:
+        root = ET.fromstring(raw)
+    except Exception:
+        return False
+    for node in root.iter():
+        if node.tag.split("}")[-1] in ("infoTable", "informationTable"):
+            return True
+    return False
 
 
 def _fetch_info_table(cik, accession, primary):
     """Fetch the 13F information-table XML.
 
     primaryDocument is NOT always the info table: some filers (e.g. Berkshire)
-    use an HTML-in-XML display document. Fallback: scan the filing index for
-    .xml candidates in the accession directory and use the first that contains
-    the infoTable markup.
+    use an HTML-in-XML display document, and info-table docs come in several
+    shapes (legacy <informationTable>, default-namespace, and prefixed
+    <ns1:infoTable>). Fallback: scan the filing index for .xml candidates in
+    the accession directory and use the first that parses as an info table.
     """
     acc = accession.replace("-", "")
     primary_url = f"https://www.sec.gov/Archives/edgar/data/{cik}/{acc}/{primary}"
     try:
         raw = edgar.get(primary_url, raw=True)
-        if b"<infoTable" in raw or b"<informationTable" in raw:
+        if _parses_as_info_table(raw):
             return raw, primary_url
     except Exception:
         pass
-    idx_url = f"https://www.sec.gov/Archives/edgar/data/{cik}/{acc}/{acc}-index.html"
+    # NOTE: the index FILE is named with the dashed accession number inside the
+    # undashed accession directory. (SEC returns 503, not 404, for wrong paths.)
+    idx_url = f"https://www.sec.gov/Archives/edgar/data/{cik}/{acc}/{accession}-index.html"
     idx_html = edgar.get(idx_url, raw=True).decode("utf-8", "ignore")
     hrefs = re.findall(r'href="([^"]+\.xml)"', idx_html)
+    # NOTE: Archives paths use UNPadded CIKs, so no digit-count filter. The
+    # accession directory is the anchor; skip XSLT wrappers and schemas.
     cands = [h for h in hrefs
-             if "/xsl" not in h and not h.lower().endswith(".xsd")
-             and re.search(r"/\d{10}/", h, re.I)]
+             if "/xsl" not in h.lower()
+             and not h.lower().endswith(".xsd")
+             and f"/{acc}/" in h]
 
     def score(h):
         hl = h.lower()
-        return 0 if any(k in hl for k in ("infotable", "info_table", "form13f", "primary")) else 1
+        if any(k in hl for k in ("infotable", "info_table", "form13f")):
+            return 0
+        if "primary" in hl:
+            return 1
+        return 2
     cands.sort(key=score)
     last_err = None
-    for h in cands[:6]:
+    for h in cands[:5]:
         url = ("https://www.sec.gov" + h) if h.startswith("/") else idx_url.rsplit("/", 1)[0] + "/" + h
         try:
             raw = edgar.get(url, raw=True)
         except Exception as exc:
             last_err = exc
             continue
-        if b"<infoTable" in raw or b"<informationTable" in raw:
+        if _parses_as_info_table(raw):
             return raw, url
-    raise ValueError(f"13F information table not found in {accession}: {last_err or 'no candidates parsed'}")
+        last_err = ValueError(f"{h}: no infoTable markup")
+    raise ValueError(f"13F information table not found in {accession}: {last_err or 'no candidates'}")
 
 
 def fetch_fund_quarters(cik, n=2, progress=None):
@@ -198,7 +237,7 @@ def fund_qoq(latest, prior=None):
 def top_moves(fund_reports, min_funds=2, include_etfs=False, limit=50):
     """Cross-fund convergence for the latest quarter.
     fund_reports: [{fund: {slug, name, manager}, qoq: fund_qoq result}]
-    Returns buys, sells (ranked by net delta across the basket).
+    Returns buys, sells (ranked: convergence first, then net delta magnitude).
     """
     agg = {}
     for fr in fund_reports:
@@ -207,69 +246,80 @@ def top_moves(fund_reports, min_funds=2, include_etfs=False, limit=50):
         q = fr["qoq"]
         fund_label = fr["fund"]["name"]
         # Rebuild per-fund delta map from qoq lists (keeps issuer metadata).
-        delta_by_cusip = {}
+        movers = {}
         for p in q["new_positions"]:
-            delta_by_cusip[p["cusip"] or (p["issuer"] + "|" + p["class"])] = (
-                p["value_usd"], True)
+            movers[p["cusip"] or (p["issuer"] + "|" + p["class"])] = (p["value_usd"], True, p)
         for p in q["increased"]:
-            key = p["cusip"] or (p["issuer"] + "|" + p["class"])
-            delta_by_cusip[key] = (p["delta_usd"], False)
+            movers[p["cusip"] or (p["issuer"] + "|" + p["class"])] = (p["delta_usd"], False, p)
         for p in q["decreased"]:
-            key = p["cusip"] or (p["issuer"] + "|" + p["class"])
-            delta_by_cusip[key] = (p["delta_usd"], False)
+            movers[p["cusip"] or (p["issuer"] + "|" + p["class"])] = (p["delta_usd"], False, p)
         for p in q["exited_positions"]:
-            key = p["cusip"] or (p["issuer"] + "|" + p["class"])
-            delta_by_cusip[key] = (p["delta_usd"], False)
+            movers[p["cusip"] or (p["issuer"] + "|" + p["class"])] = (p["delta_usd"], False, p)
 
-        for key, (delta, is_new) in delta_by_cusip.items():
+        for key, (delta, is_new, src) in movers.items():
             row = agg.setdefault(key, {
                 "issuer": None, "class": None, "cusip": None, "ticker": None,
                 "net_delta_usd": 0, "funds": [], "is_new_anywhere": False,
             })
-            # keep the richest metadata we've seen for this security
-            src = None
-            for lst in (q["new_positions"], q["increased"], q["decreased"], q["exited_positions"]):
-                for p in lst:
-                    k = p["cusip"] or (p["issuer"] + "|" + p["class"])
-                    if k == key:
-                        src = p
-                        break
-                if src:
-                    break
-            if src:
-                row["issuer"] = src.get("issuer") or row["issuer"]
-                row["class"] = src.get("class") or row["class"]
-                row["cusip"] = src.get("cusip") or row["cusip"]
+            if not row["issuer"]:
+                row["issuer"] = src.get("issuer")
+                row["class"] = src.get("class")
+                row["cusip"] = src.get("cusip")
             row["net_delta_usd"] += delta
-            row["funds"].append({
-                "fund": fund_label, "delta_usd": delta, "is_new": is_new,
-            })
+            row["funds"].append({"fund": fund_label, "delta_usd": delta, "is_new": is_new})
             row["is_new_anywhere"] = row["is_new_anywhere"] or is_new
 
-    def finish(rows):
-        for row in rows:
-            buys = [f for f in row["funds"] if f["delta_usd"] > 0]
-            sells = [f for f in row["funds"] if f["delta_usd"] < 0]
-            row["funds_buying"] = len(buys)
-            row["funds_selling"] = len(sells)
-            row["convergence"] = len(buys) >= min_funds or len(sells) >= min_funds
-            row["etf"] = _looks_like_etf(row["issuer"], row["class"])
-            if not row["ticker"]:
-                t = names.ticker_for(row["issuer"] or "")
-                if t:
-                    row["ticker"] = t[0]
-        if not include_etfs:
-            rows = [r for r in rows if not r["etf"]]
-        return rows[:limit]
+    # Merge rows that resolve to the same ticker: the same security filed
+    # with a CUSIP by one fund and without by another must be one row.
+    merged = {}
+    for key, row in agg.items():
+        t = names.ticker_for(row["issuer"] or "")
+        row["ticker"] = t[0] if t else None
+        mkey = ("T:" + row["ticker"].upper()) if row["ticker"] else ("K:" + key)
+        m = merged.get(mkey)
+        if m is None:
+            row["funds"] = row["funds"][:]
+            merged[mkey] = row
+        else:
+            m["net_delta_usd"] += row["net_delta_usd"]
+            m["funds"].extend(row["funds"])
+            m["is_new_anywhere"] = m["is_new_anywhere"] or row["is_new_anywhere"]
+            for fld in ("issuer", "class", "cusip", "ticker"):
+                if not m.get(fld) and row.get(fld):
+                    m[fld] = row[fld]
+    rows = list(merged.values())
 
-    buys = finish([r for r in agg.values() if r["net_delta_usd"] > 0])
-    buys.sort(key=lambda r: r["net_delta_usd"], reverse=True)
-    sells = finish([r for r in agg.values() if r["net_delta_usd"] < 0])
-    sells.sort(key=lambda r: r["net_delta_usd"])
-    # convergence first, then by magnitude
-    buys.sort(key=lambda r: (not r["convergence"], -r["net_delta_usd"]))
-    sells.sort(key=lambda r: (not r["convergence"], r["net_delta_usd"]))
-    return {"period": _latest_period(fund_reports), "buys": buys[:limit], "sells": sells[:limit]}
+    # A fund can file the same company under several CUSIPs (e.g. GOOG +
+    # GOOGL, or common + options): net its moves into one entry per fund.
+    for row in rows:
+        by_fund = {}
+        for f in row["funds"]:
+            e = by_fund.setdefault(f["fund"], {"fund": f["fund"], "delta_usd": 0, "is_new": False})
+            e["delta_usd"] += f["delta_usd"]
+            e["is_new"] = e["is_new"] or f["is_new"]
+        row["funds"] = list(by_fund.values())
+
+    for row in rows:
+        buys = [f for f in row["funds"] if f["delta_usd"] > 0]
+        sells = [f for f in row["funds"] if f["delta_usd"] < 0]
+        row["funds_buying"] = len(buys)
+        row["funds_selling"] = len(sells)
+        # convergence is side-specific: a buy row needs min_funds buying.
+        row["convergence"] = None
+        row["etf"] = _looks_like_etf(row["issuer"], row["class"])
+
+    def finish(subset, side):
+        for row in subset:
+            row["convergence"] = (
+                row["funds_buying"] if side == "buy" else row["funds_selling"]) >= min_funds
+        out = [r for r in subset if include_etfs or not r["etf"]]
+        out.sort(key=lambda r: (not r["convergence"],
+                                -r["net_delta_usd"] if side == "buy" else r["net_delta_usd"]))
+        return out[:limit]
+
+    buys = finish([r for r in rows if r["net_delta_usd"] > 0], "buy")
+    sells = finish([r for r in rows if r["net_delta_usd"] < 0], "sell")
+    return {"period": _latest_period(fund_reports), "buys": buys, "sells": sells}
 
 
 def _latest_period(fund_reports):
@@ -306,10 +356,22 @@ def fund_report(fund, min_positions_value=0, top_n=15):
 
 
 def stock_holdings(symbol, fund_reports=None):
-    """Which tracked funds hold a security (by ticker, CUSIP, or issuer name)."""
+    """Which tracked funds hold a security (by ticker, CUSIP, or issuer name).
+
+    Tickers are resolved to the official SEC company title first, so
+    'NVDA' matches NVIDIA CORP and not the '2X SHORT NVDA' ETFs.
+    """
     if fund_reports is None:
         fund_reports = build_fund_reports()
     q = str(symbol).strip().lower()
+    if not q:
+        return []
+    # ticker -> official title (normalized key) for strict issuer matching
+    issuer_key = None
+    if q.isalnum() and len(q) <= 6:
+        t = names.ticker_to_title(q)
+        if t:
+            issuer_key = t[0]
     out = []
     for fr in fund_reports:
         qu = fr["qoq"]
@@ -317,7 +379,7 @@ def stock_holdings(symbol, fund_reports=None):
             continue
         latest = None
         for p in qu.get("all_positions") or []:
-            if _security_matches(p, q):
+            if _security_matches(p, q, issuer_key):
                 latest = p
                 break
         if latest is None:
@@ -326,14 +388,19 @@ def stock_holdings(symbol, fund_reports=None):
         if not ticker:
             t = names.ticker_for(latest.get("issuer") or "")
             ticker = t[0] if t else None
+        value = latest.get("value_usd") or 0
+        total = qu.get("total_value_usd")
         out.append({
             "fund": fr["fund"]["name"],
             "slug": fr["fund"]["slug"],
             "manager": fr["fund"].get("manager"),
             "ticker": ticker,
             "issuer": latest.get("issuer"),
-            "value_usd": latest.get("value_usd"),
-            "pct_of_portfolio": latest.get("pct_of_portfolio"),
+            "cusip": latest.get("cusip"),
+            "class": latest.get("class"),
+            "put_call": latest.get("put_call"),
+            "value_usd": value,
+            "pct_of_portfolio": round(100.0 * value / total, 2) if total else None,
             "period": qu["period"],
             "movement": _movement_label(fr, latest),
         })
@@ -341,11 +408,25 @@ def stock_holdings(symbol, fund_reports=None):
     return out
 
 
-def _security_matches(p, q):
-    for field in ("ticker", "cusip", "issuer", "class"):
-        v = (p.get(field) or "").lower()
-        if v and (v == q or q in v):
-            return True
+def _security_matches(p, q, issuer_key=None):
+    """Match a position against a query.
+    - CUSIP: exact (alphanumeric, 6-12 chars).
+    - Ticker: exact, when the position has one.
+    - Issuer: strict normalized comparison when the query was resolved to an
+      official title (issuer_key), otherwise substring (min 4 chars).
+    Never matches on class/other free-text — that's how 'NVDA' used to hit
+      '2X SHORT NVDA' ETFs.
+    """
+    if q.isalnum() and 6 <= len(q) <= 12 and (p.get("cusip") or "").lower() == q:
+        return True
+    if p.get("ticker") and str(p["ticker"]).lower() == q:
+        return True
+    issuer = p.get("issuer") or ""
+    if issuer_key:
+        ni = names.normalize(issuer)
+        return bool(ni) and (ni == issuer_key or issuer_key in ni or ni in issuer_key)
+    if len(q) >= 4 and q in issuer.lower():
+        return True
     return False
 
 

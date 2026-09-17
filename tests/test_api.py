@@ -58,6 +58,16 @@ def _seed_state():
     ]
     qoq_a["top_positions"] = qoq_a["all_positions"][:3]
     qoq_b["top_positions"] = qoq_b["all_positions"][:3]
+    # NVDA regression data: real holding + a short-NVDA ETF that must NOT
+    # match the ticker query "NVDA" via its class text.
+    qoq_a["all_positions"].extend([
+        {"issuer": "NVIDIA CORP", "class": "COM", "cusip": "67066G104",
+         "value_usd": 1_418_869_170, "shares": 7_091_256, "put_call": None,
+         "issuance": None, "ticker": None},
+        {"issuer": "GRANITESHARES ETF TR", "class": "2X SHOR NVDA NEW",
+         "cusip": "38747R629", "value_usd": 1_058_151, "shares": 1000,
+         "put_call": None, "issuance": None, "ticker": None},
+    ])
     reports = [
         {"fund": tf.FUND_A, "qoq": qoq_a},
         {"fund": tf.FUND_B, "qoq": qoq_b},
@@ -82,13 +92,19 @@ def _seed_state():
             "moves": moves,
             "errors": {},
         })
-    # offline ticker index (no network)
+    # offline ticker index (no network); keys are normalized titles
     names._cache.update({
         "at": time.time(),
         "index": {
-            "GAMMA LLC": ("GAM", "Gamma Llc"),
-            "ALPHA CORP": ("AAA", "Alpha Corp"),
-            "BETA INC": ("BEE", "Beta Inc"),
+            "GAMMA": ("GAM", "GAMMA LLC"),
+            "ALPHA": ("AAA", "ALPHA CORP"),
+            "BETA": ("BEE", "BETA INC"),
+            "NVIDIA": ("NVDA", "NVIDIA CORP"),
+            "GRANITESHARES ETF TR": ("SOSN", "Graniteshares 2x Short Nvidia ETF"),
+        },
+        "by_ticker": {
+            "GAM": "GAMMA", "AAA": "ALPHA", "BEE": "BETA",
+            "NVDA": "NVIDIA", "SOSN": "GRANITESHARES ETF TR",
         },
     })
 
@@ -164,6 +180,17 @@ class ApiTests(unittest.TestCase):
         status, body = self._get("/api/stock?q=ZZZZ")
         self.assertEqual(status, 200)
         self.assertEqual(body["funds_holding"], 0)
+
+    def test_stock_lookup_ticker_not_etf_class(self):
+        # Regression: "NVDA" must match NVIDIA CORP, not the
+        # "2X SHOR NVDA NEW" ETF whose class text contains the ticker.
+        status, body = self._get("/api/stock?q=NVDA")
+        self.assertEqual(status, 200)
+        self.assertEqual(body["funds_holding"], 1)
+        self.assertEqual(body["holdings"][0]["issuer"], "NVIDIA CORP")
+        self.assertEqual(body["holdings"][0]["value_usd"], 1_418_869_170)
+        self.assertEqual(body["holdings"][0]["ticker"], "NVDA")
+        self.assertIsNotNone(body["holdings"][0]["pct_of_portfolio"])
 
     def test_insider(self):
         fake = {"window": {"start": "2026-08-18", "end": "2026-09-17"}, "filings_scanned": 1,

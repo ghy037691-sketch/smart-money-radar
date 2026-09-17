@@ -78,6 +78,34 @@ XML_Q2 = b"""<?xml version="1.0" encoding="UTF-8"?>
 </informationTable>
 """
 
+# Modern namespace format: whole-dollar values, sub-manager rows to aggregate,
+# no putCall/issuanceType.
+XML_MODERN = b"""<?xml version="1.0" encoding="UTF-8"?>
+<informationTable xmlns="http://www.sec.gov/edgar/document/thirteenf/informationtable">
+  <infoTable>
+    <nameOfIssuer>ALLY FINL INC</nameOfIssuer>
+    <titleOfClass>COM</titleOfClass>
+    <cusip>02005N100</cusip>
+    <value>100000000</value>
+    <shrsOrPrnAmt><sshPrnamt>1000000</sshPrnamt><sshPrnamtType>SH</sshPrnamtType></shrsOrPrnAmt>
+  </infoTable>
+  <infoTable>
+    <nameOfIssuer>ALLY FINL INC</nameOfIssuer>
+    <titleOfClass>COM</titleOfClass>
+    <cusip>02005N100</cusip>
+    <value>50000000</value>
+    <shrsOrPrnAmt><sshPrnamt>500000</sshPrnamt><sshPrnamtType>SH</sshPrnamtType></shrsOrPrnAmt>
+  </infoTable>
+  <infoTable>
+    <nameOfIssuer>GAMMA LLC</nameOfIssuer>
+    <titleOfClass>COM</titleOfClass>
+    <cusip>010203040</cusip>
+    <value>25000000</value>
+    <shrsOrPrnAmt><sshPrnamt>250000</sshPrnamt><sshPrnamtType>SH</sshPrnamtType></shrsOrPrnAmt>
+  </infoTable>
+</informationTable>
+"""
+
 FUND_A = {"slug": "alpha-fund", "name": "ALPHA FUND LP", "manager": "A", "cik": 1}
 FUND_B = {"slug": "beta-fund", "name": "BETA FUND LP", "manager": "B", "cik": 2}
 
@@ -116,6 +144,20 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(qoq["increased"][1]["delta_usd"], 10_000_000)
         self.assertEqual(qoq["decreased"], [])
 
+    def test_modern_format_whole_dollars_and_aggregation(self):
+        positions, total = thirteenf.parse_13f_xml(XML_MODERN)
+        self.assertEqual(total, 175_000_000)  # whole dollars, no x1000
+        # sub-manager rows for the same CUSIP are aggregated
+        self.assertEqual(len(positions), 2)
+        ally = positions["02005N100"]
+        self.assertEqual(ally["value_usd"], 150_000_000)
+        self.assertEqual(ally["shares"], 1_500_000)
+        self.assertEqual(ally["issuer"], "ALLY FINL INC")
+        gamma = positions["010203040"]
+        self.assertEqual(gamma["value_usd"], 25_000_000)
+        self.assertIsNone(gamma["put_call"])
+        self.assertIsNone(gamma["issuance"])
+
     def test_etf_heuristic(self):
         self.assertTrue(thirteenf._looks_like_etf("VANGUARD S&P 500 ETF", "INDEX"))
         self.assertTrue(thirteenf._looks_like_etf("ISHARES CORE S&P 100", "INDEX"))
@@ -125,6 +167,16 @@ class ParseTests(unittest.TestCase):
 
 
 class MovesTests(unittest.TestCase):
+    def setUp(self):
+        # no network in unit tests: ticker resolution off (keys stay CUSIP-based)
+        import names
+        self._orig_ticker_for = names.ticker_for
+        names.ticker_for = lambda issuer: None
+
+    def tearDown(self):
+        import names
+        names.ticker_for = self._orig_ticker_for
+
     def _reports(self):
         def pos(issuer, cusip, value, shares, issuance, cls="COM"):
             return {"issuer": issuer, "class": cls, "cusip": cusip, "value_usd": value,

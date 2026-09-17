@@ -13,7 +13,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import edgar  # noqa: E402
 
-_cache = {"at": 0.0, "index": None}
+_cache = {"at": 0.0, "index": None, "by_ticker": None}
 _lock = threading.Lock()
 TTL = 7 * 24 * 3600
 
@@ -39,12 +39,36 @@ def _load():
             return _cache["index"]
         universe = edgar.ticker_universe()
         index = {}
+        by_ticker = {}
         for _cik, ticker, title in universe:
             key = _norm(title)
             if len(key) >= 4 and key not in index:
                 index[key] = (ticker, title)
-        _cache.update(index=index, at=time.time())
+                by_ticker.setdefault(ticker.upper(), key)
+        _cache.update(index=index, by_ticker=by_ticker, at=time.time())
         return index
+
+
+def normalize(name: str) -> str:
+    return _norm(name)
+
+
+def ticker_to_title(ticker: str):
+    """Reverse lookup: ticker -> (normalized SEC title key, raw title)."""
+    try:
+        _load()
+    except Exception:
+        return None
+    t = (ticker or "").strip().upper()
+    if not t:
+        return None
+    with _lock:
+        by_ticker = _cache["by_ticker"]
+        key = by_ticker.get(t) if by_ticker else None
+        if not key:
+            return None
+        pair = _cache["index"].get(key)
+    return (key, pair[1]) if pair else None
 
 
 def ticker_for(issuer: str):
