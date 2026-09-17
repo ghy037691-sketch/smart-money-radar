@@ -59,37 +59,54 @@ def _client_allowed(client, limit, window=60):
         return True
 
 
-def _build():
-    """Background build of the whole basket (the expensive step)."""
-    try:
-        reports = thirteenf.build_fund_reports()
-        moves = thirteenf.top_moves(reports)
-        with _state["lock"]:
-            _state["funds"] = [
-                {"slug": r["fund"]["slug"], "name": r["fund"]["name"],
-                 "manager": r["fund"].get("manager"), "cik": r["fund"]["cik"],
-                 "period": r["qoq"]["period"] if r.get("qoq") else None,
-                 "total_value_usd": r["qoq"].get("total_value_usd") if r.get("qoq") else None,
-                 "positions_count": r["qoq"].get("positions_count") if r.get("qoq") else None,
-                 "new_count": len(r["qoq"]["new_positions"]) if r.get("qoq") else 0,
-                 "exited_count": len(r["qoq"]["exited_positions"]) if r.get("qoq") else 0,
-                 "error": r.get("error")}
-                for r in reports
-            ]
-            _state["qoq"] = {r["fund"]["slug"]: (r["qoq"] or {}) for r in reports}
-            for r in reports:
-                if r.get("error"):
-                    _state["errors"][r["fund"]["slug"]] = r["error"]
-            _state["moves"] = moves
-            _state["generated_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+def _publish(reports, errors):
+    """Publish whatever is ready so far (progressive availability)."""
+    with _state["lock"]:
+        funds = []
+        qoq_map = {}
+        for r in reports:
+            fund, qoq = r["fund"], r.get("qoq")
+            funds.append({
+                "slug": fund["slug"], "name": fund["name"], "manager": fund.get("manager"),
+                "cik": fund["cik"],
+                "period": qoq["period"] if qoq else None,
+                "total_value_usd": qoq.get("total_value_usd") if qoq else None,
+                "positions_count": qoq.get("positions_count") if qoq else None,
+                "new_count": len(qoq["new_positions"]) if qoq else 0,
+                "exited_count": len(qoq["exited_positions"]) if qoq else 0,
+                "error": r.get("error"),
+            })
+            if qoq:
+                qoq_map[fund["slug"]] = qoq
+        _state["funds"] = funds
+        _state["qoq"] = qoq_map
+        _state["errors"] = dict(errors)
+        _state["moves"] = thirteenf.top_moves(reports)
+        _state["generated_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        if any(qoq for _f, qoq in ((r["fund"], r.get("qoq")) for r in reports)):
             _state["status"] = "ready"
+
+
+def _build():
+    """Background build of the whole basket, publishing incrementally:
+    the site goes ready as soon as the first fund parses, then fills in.
+    """
+    reports = []
+    errors = {}
+    for fund in thirteenf.load_funds():
+        try:
+            qoq = thirteenf.fund_report(fund)
+            if "error" in qoq:
+                raise ValueError(qoq["error"])
+            reports.append({"fund": fund, "qoq": qoq})
+            print(f"smart-money-radar: fund ready {fund['slug']} ({len(reports)})", flush=True)
+        except Exception as exc:
+            errors[fund["slug"]] = str(exc)
+            reports.append({"fund": fund, "qoq": None, "error": str(exc)})
+            print(f"smart-money-radar: fund failed {fund['slug']}: {exc}", file=sys.stderr, flush=True)
+        _publish(reports, errors)
         _save_disk_cache()
-        print(f"smart-money-radar: basket ready at {datetime.now(timezone.utc).isoformat()}", flush=True)
-    except Exception as exc:
-        with _state["lock"]:
-            _state["status"] = "error"
-            _state["errors"]["__build__"] = str(exc)
-        print(f"smart-money-radar: build failed: {exc}", file=sys.stderr, flush=True)
+    print(f"smart-money-radar: basket build complete at {datetime.now(timezone.utc).isoformat()}", flush=True)
 
 
 def _save_disk_cache():
@@ -135,14 +152,24 @@ def _load_disk_cache():
 
 
 def _get_insider(days=30, min_value=100_000, limit=100):
+    """Fetch (or reuse) the insider scan; cached by (days, min_value), sliced to limit."""
+    key = (days, min_value)
     with _state["insider_lock"]:
         cached = _state["insider"]
-        if (cached and days == 30 and min_value == 100_000 and limit >= 100
-                and time.time() - cached["fetched_at"] < INSIDER_TTL_SECONDS):
-            return cached["data"]
-        data = thirteenf.insider_buys(days_back=days, min_value_usd=min_value, limit=limit)
-        _state["insider"] = {"fetched_at": time.time(), "data": data}
-        return data
+        if cached and cached["key"] == key and time.time() - cached["fetched_at"] < INSIDER_TTL_SECONDS:
+            return {**cached["data"], "insider_buys": cached["data"]["insider_buys"][:limit]}
+        data = thirteenf.insider_buys(days_back=days, min_value_usd=min_value, limit=max(limit, 100))
+        _state["insider"] = {"fetched_at": time.time(), "key": key, "data": data}
+        return {**data, "insider_buys": data["insider_buys"][:limit]}
+
+
+def _insider_warm():
+    time.sleep(15)  # let the basket build start first
+    try:
+        _get_insider()
+        print("smart-money-radar: insider scan warm", flush=True)
+    except Exception as exc:
+        print(f"smart-money-radar: insider warm failed: {exc}", file=sys.stderr)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -314,6 +341,7 @@ def main():
     fresh = _load_disk_cache()
     if not fresh or _state["status"] != "ready":
         threading.Thread(target=_build, daemon=True).start()
+    threading.Thread(target=_insider_warm, daemon=True).start()
     server = ThreadingHTTPServer(("0.0.0.0", port), Handler)
     print(f"smart-money-radar v{VERSION} listening on 0.0.0.0:{port} (cache={'warm' if fresh else 'cold'})", flush=True)
     try:
