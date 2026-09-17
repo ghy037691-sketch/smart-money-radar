@@ -60,36 +60,43 @@ def _client_allowed(client, limit, window=60):
 
 
 def _publish(reports, errors):
-    """Publish whatever is ready so far (progressive availability)."""
+    """Publish whatever is ready so far (progressive availability).
+    Heavy work (top_moves) happens OUTSIDE the state lock so /api/health
+    never blocks — a blocked health endpoint makes Render restart the box.
+    """
+    funds = []
+    qoq_map = {}
+    for r in reports:
+        fund, qoq = r["fund"], r.get("qoq")
+        funds.append({
+            "slug": fund["slug"], "name": fund["name"], "manager": fund.get("manager"),
+            "cik": fund["cik"],
+            "period": qoq["period"] if qoq else None,
+            "total_value_usd": qoq.get("total_value_usd") if qoq else None,
+            "positions_count": qoq.get("positions_count") if qoq else None,
+            "new_count": len(qoq["new_positions"]) if qoq else 0,
+            "exited_count": len(qoq["exited_positions"]) if qoq else 0,
+            "error": r.get("error"),
+        })
+        if qoq:
+            qoq_map[fund["slug"]] = qoq
+    moves = thirteenf.top_moves(reports)
+    generated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     with _state["lock"]:
-        funds = []
-        qoq_map = {}
-        for r in reports:
-            fund, qoq = r["fund"], r.get("qoq")
-            funds.append({
-                "slug": fund["slug"], "name": fund["name"], "manager": fund.get("manager"),
-                "cik": fund["cik"],
-                "period": qoq["period"] if qoq else None,
-                "total_value_usd": qoq.get("total_value_usd") if qoq else None,
-                "positions_count": qoq.get("positions_count") if qoq else None,
-                "new_count": len(qoq["new_positions"]) if qoq else 0,
-                "exited_count": len(qoq["exited_positions"]) if qoq else 0,
-                "error": r.get("error"),
-            })
-            if qoq:
-                qoq_map[fund["slug"]] = qoq
         _state["funds"] = funds
         _state["qoq"] = qoq_map
         _state["errors"] = dict(errors)
-        _state["moves"] = thirteenf.top_moves(reports)
-        _state["generated_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        if any(qoq for _f, qoq in ((r["fund"], r.get("qoq")) for r in reports)):
+        _state["moves"] = moves
+        _state["generated_at"] = generated_at
+        if any(qoq_map.values()):
             _state["status"] = "ready"
 
 
 def _build():
     """Background build of the whole basket, publishing incrementally:
     the site goes ready as soon as the first fund parses, then fills in.
+    Disk cache is written once at the end (per-fund writes are too heavy
+    for the free tier's disk and I/O budget).
     """
     reports = []
     errors = {}
@@ -105,7 +112,7 @@ def _build():
             reports.append({"fund": fund, "qoq": None, "error": str(exc)})
             print(f"smart-money-radar: fund failed {fund['slug']}: {exc}", file=sys.stderr, flush=True)
         _publish(reports, errors)
-        _save_disk_cache()
+    _save_disk_cache()
     print(f"smart-money-radar: basket build complete at {datetime.now(timezone.utc).isoformat()}", flush=True)
 
 
@@ -115,8 +122,8 @@ def _save_disk_cache():
         with _state["lock"]:
             payload = {
                 "generated_at": _state["generated_at"],
-                "funds": _state["funds"],
-                "qoq": {k: v for k, v in _state["qoq"].items()},
+                "funds": list(_state["funds"] or []),
+                "qoq": dict(_state["qoq"]),
                 "moves": _state["moves"],
             }
         with open(CACHE_PATH, "w", encoding="utf-8") as fh:
@@ -232,10 +239,10 @@ class Handler(BaseHTTPRequestHandler):
                 return
 
         if path == "/api/health":
-            with _state["lock"]:
-                status = _state["status"]
+            # Lock-free on purpose: the platform health probe must answer
+            # instantly even while the build thread is publishing.
             self._json({"ok": True, "service": "smart-money-radar", "version": VERSION,
-                        "cache_status": status,
+                        "cache_status": _state["status"],
                         "generated_at": _state["generated_at"],
                         "time": datetime.now(timezone.utc).isoformat(timespec="seconds")})
             return
